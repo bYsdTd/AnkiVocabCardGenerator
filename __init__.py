@@ -55,6 +55,17 @@ def _read_env_file_key() -> str:
         return ""
     return ""
 
+def _read_system_prompt() -> str:
+    base = os.path.dirname(__file__)
+    path = os.path.join(base, "system_prompt.txt")
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        return ""
+
 def resolve_api_key(cfg: Dict[str, Any]) -> str:
     key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not key:
@@ -108,20 +119,7 @@ def call_openai_vocab(word: str, cfg: Dict[str, Any]) -> Dict[str, str]:
     model = cfg.get("text_model", "gpt-4o-mini")
 
     url = f"{api_base}/chat/completions"
-
-    system_msg = (
-        "You are an English vocabulary assistant for an advanced learner.\n"
-        "Given a single English headword, respond ONLY with strict JSON.\n"
-        "Schema:\n"
-        "{\n"
-        "  \"meaning\": \"short English definition\",\n"
-        "  \"example\": \"one short, natural, spoken-style sentence using the word\",\n"
-        "  \"phonetic\": \"IPA transcription like /məˈtɪkjʊləs/\",\n"
-        "  \"synonyms\": \"1–2 sentence English paraphrase or near-synonyms in plain text\",\n"
-        "  \"notesCN\": \"natural Chinese translation of the example sentence\"\n"
-        "}\n"
-        "Do NOT include explanations outside JSON. Keep everything concise and exam-friendly."
-    )
+    system_msg = _read_system_prompt()
 
     payload = {
         "model": model,
