@@ -1,0 +1,8 @@
+{
+  "name": "OpenAI English Vocab Card Generator",
+  "mod": 0,
+  "min_point_version": 55,
+  "max_point_version": 99,
+  "author": "You",
+  "description": "Input a word, then auto-generate phonetic, meaning, example, Chinese translation and TTS audio into Vocab deck (VocabularyPro note type)."
+}

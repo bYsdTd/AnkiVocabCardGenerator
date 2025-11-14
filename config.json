@@ -1,0 +1,21 @@
+{
+  "openai_api_key": "",
+  "api_base": "https://api.openai.com/v1",
+  "proxy": "http://127.0.0.1:8118",
+  
+  "text_model": "gpt-4o-mini",
+  "tts_model": "tts-1",
+  "tts_voice": "alloy",
+
+  "deck_name": "Vocab",
+  "note_type": "VocabularyPro",
+
+  "field_word": "Word",
+  "field_meaning": "Meaning",
+  "field_example": "Example",
+  "field_phonetic": "Phonetic",
+  "field_audio": "Audio",
+  "field_audio_example": "AudioExample",
+  "field_synonyms": "Synonyms",
+  "field_notes_cn": "NotesCN"
+}
