@@ -1,12 +1,19 @@
 {
   "openai_api_key": "",
-  "api_base": "https://api.openai.com/v1",
+  "api_base": "https://api.deepseek.com/v1",
   "proxy": "http://127.0.0.1:8118",
   
-  "text_model": "gpt-4o-mini",
+  "text_model": "deepseek-reasoner",
   "tts_model": "gpt-4o-mini-tts",
   "tts_voice": "alloy",
   "tts_voices": ["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse"],
+  "enable_tts_word": true,
+  "enable_tts_example": true,
+
+  "image_model": "dall-e-2",
+  "image_size": "256x256",
+  "field_image": "Image",
+  "enable_image": false,
 
   "deck_name": "Vocab",
   "note_type": "VocabularyPro",
