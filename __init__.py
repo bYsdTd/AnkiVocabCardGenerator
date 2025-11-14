@@ -10,6 +10,7 @@ from typing import Dict, Any
 from aqt import mw, gui_hooks
 from aqt.qt import QAction, QInputDialog, qconnect
 from aqt.utils import tooltip
+import random
 
 
 # ---------------- 简单日志工具：写到插件目录的 debug.log ---------------- #
@@ -151,8 +152,14 @@ def call_openai_tts(text: str, cfg: Dict[str, Any]) -> bytes:
     """生成 MP3 语音，支持 HTTP 代理。"""
     api_base = cfg.get("api_base", "https://api.openai.com/v1")
     api_key = resolve_api_key(cfg)
-    model = cfg.get("tts_model", "tts-1")
-    voice = cfg.get("tts_voice", "alloy")
+    model = cfg.get("tts_model", "gpt-4o-mini-tts")
+
+    voices = cfg.get("tts_voices", [])
+    if voices:
+        voice = random.choice(voices)
+    else:
+        voice = cfg.get("tts_voice", "alloy")
+
 
     url = f"{api_base}/audio/speech"
 
@@ -162,6 +169,8 @@ def call_openai_tts(text: str, cfg: Dict[str, Any]) -> bytes:
         "input": text,
         "format": "mp3",
     }
+
+    log(f"[tts] request payload={payload}")
 
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST")
@@ -236,7 +245,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> 
     example_text = info.get("example", "")
 
     # 单词语音
-    audio_word = call_openai_tts(word, cfg)
+    audio_word = call_openai_tts(f'{word}.', cfg)
     fname_word = f"{word.strip().lower()}_word.mp3"
     col.media.write_data(fname_word, audio_word)
     note[f_audio] = f"[sound:{fname_word}]"
