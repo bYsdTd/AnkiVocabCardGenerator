@@ -7,8 +7,8 @@
   "tts_model": "gpt-4o-mini-tts",
   "tts_voice": "alloy",
   "tts_voices": ["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse"],
-  "enable_tts_word": true,
-  "enable_tts_example": true,
+  "enable_tts_word": false,
+  "enable_tts_example": false,
 
   "image_model": "dall-e-2",
   "image_size": "256x256",
