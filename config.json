@@ -1,16 +1,24 @@
 {
-  "api_base": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+  "api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
   "proxy": "http://127.0.0.1:8118",
+  "proxy_enabled_map": {
+    "openai": true,
+    "deepseek": false,
+    "qwen": false
+  },
   "text_provider": "qwen",
   "tts_provider": "qwen",
   "image_provider": "openai",
   "api_bases": {
     "openai": "https://api.openai.com/v1",
     "deepseek": "https://api.deepseek.com/v1",
-    "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "kimi": "https://api.moonshot.cn/v1",
     "grok": "https://api.x.ai/v1",
     "gemini": "https://generativelanguage.googleapis.com"
+  },
+  "api_bases_audio": {
+    "qwen": "https://dashscope.aliyuncs.com/api/v1"
   },
   "text_models": {
     "openai": "gpt-4o-mini",
@@ -39,15 +47,15 @@
   "tts_voice": "alloy",
   "tts_voices_map": {
     "openai": ["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse"],
-    "qwen": ["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse"]
+    "qwen": ["Jennifer", "Ryan", "Katerina"]
   },
   "tts_voice_map": {
     "openai": "alloy",
-    "qwen": "alloy"
+    "qwen": "Katerina"
   },
   "tts_voices": ["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse"],
-  "enable_tts_word": false,
-  "enable_tts_example": false,
+  "enable_tts_word": true,
+  "enable_tts_example": true,
 
   "image_models": {
     "openai": "dall-e-2"

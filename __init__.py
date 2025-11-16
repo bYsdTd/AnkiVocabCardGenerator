@@ -120,6 +120,18 @@ def get_api_base_for(provider: str, cfg: Dict[str, Any]) -> str:
         return str(bases[provider]).strip()
     return cfg.get("api_base", "https://api.openai.com/v1")
 
+def get_audio_api_base_for(provider: str, cfg: Dict[str, Any]) -> str:
+    bases = cfg.get("api_bases_audio", {}) or {}
+    if provider in bases and str(bases[provider]).strip():
+        return str(bases[provider]).strip()
+    return get_api_base_for(provider, cfg)
+
+def _proxy_addr_for(provider: str, cfg: Dict[str, Any]) -> str:
+    m = cfg.get("proxy_enabled_map", {}) or {}
+    enabled = bool(m.get(provider, True))
+    addr = str(cfg.get("proxy", "")).strip()
+    return addr if (enabled and addr) else ""
+
 def resolve_api_key_for(provider: str, cfg: Dict[str, Any]) -> str:
     env_map = {
         "openai": "OPENAI_API_KEY",
@@ -158,15 +170,16 @@ def _openai_compatible_vocab(word: str, cfg: Dict[str, Any], provider: str) -> D
         ],
         "temperature": temperature,
     }
-    resp = _http_post_json(url, payload, api_key, cfg)
+    proxy_addr = _proxy_addr_for(provider, cfg)
+    resp = _http_post_json(url, payload, api_key, proxy_addr)
     content = resp["choices"][0]["message"]["content"]
     data = json.loads(content)
     return {
-        "meaning": data.get("meaning", "").strip(),
-        "example": data.get("example", "").strip(),
-        "phonetic": data.get("phonetic", "").strip(),
-        "synonyms": data.get("synonyms", "").strip(),
-        "notesCN": data.get("notesCN", "").strip(),
+        "meaning": _str_field(data.get("meaning", "")),
+        "example": _str_field(data.get("example", "")),
+        "phonetic": _str_field(data.get("phonetic", "")),
+        "synonyms": _str_field(data.get("synonyms", "")),
+        "notesCN": _str_field(data.get("notesCN", "")),
     }
 
 def _gemini_vocab(word: str, cfg: Dict[str, Any]) -> Dict[str, str]:
@@ -187,7 +200,7 @@ def _gemini_vocab(word: str, cfg: Dict[str, Any]) -> Dict[str, str]:
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
-    proxy = cfg.get("proxy", "").strip()
+    proxy = _proxy_addr_for("gemini", cfg)
     ctx = ssl.create_default_context()
     https_handler = urllib.request.HTTPSHandler(context=ctx)
     if proxy:
@@ -209,11 +222,11 @@ def _gemini_vocab(word: str, cfg: Dict[str, Any]) -> Dict[str, str]:
     except Exception:
         data = {}
     return {
-        "meaning": str(data.get("meaning", "")).strip(),
-        "example": str(data.get("example", "")).strip(),
-        "phonetic": str(data.get("phonetic", "")).strip(),
-        "synonyms": str(data.get("synonyms", "")).strip(),
-        "notesCN": str(data.get("notesCN", "")).strip(),
+        "meaning": _str_field(data.get("meaning", "")),
+        "example": _str_field(data.get("example", "")),
+        "phonetic": _str_field(data.get("phonetic", "")),
+        "synonyms": _str_field(data.get("synonyms", "")),
+        "notesCN": _str_field(data.get("notesCN", "")),
     }
 
 def call_text(word: str, cfg: Dict[str, Any]) -> Dict[str, str]:
@@ -226,35 +239,81 @@ def call_text(word: str, cfg: Dict[str, Any]) -> Dict[str, str]:
 def call_tts(text: str, cfg: Dict[str, Any]) -> bytes:
     provider = str(cfg.get("tts_provider", "openai_compatible")).strip() or "openai_compatible"
     prov = provider if provider != "openai_compatible" else "openai"
-    api_base = get_api_base_for(prov, cfg)
     api_key = resolve_api_key_for(prov, cfg)
     tts_models = cfg.get("tts_models", {}) or {}
     model = str(tts_models.get(prov, cfg.get("tts_model", "gpt-4o-mini-tts")))
     voices_map = cfg.get("tts_voices_map", {}) or {}
     pool = voices_map.get(prov, []) or []
     voice_map = cfg.get("tts_voice_map", {}) or {}
+    voice = str(voice_map.get(prov, cfg.get("tts_voice", "alloy")))
     if pool:
-        voice = random.choice(pool)
+        try:
+            voice = random.choice(pool)
+        except Exception:
+            pass
+
+    if prov == "qwen":
+        base_audio = get_audio_api_base_for("qwen", cfg)
+        url = f"{base_audio}/services/aigc/multimodal-generation/generation"
+        payload = {"model": model, "input": {"text": text, "voice": voice}, "stream": False}
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=body, method="POST")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Authorization", f"Bearer {api_key}")
+        proxy = _proxy_addr_for("qwen", cfg)
+        ctx = ssl.create_default_context()
+        https_handler = urllib.request.HTTPSHandler(context=ctx)
+        http_handler = urllib.request.HTTPHandler()
+        if proxy:
+            proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+            opener = urllib.request.build_opener(proxy_handler, https_handler, http_handler)
+            resp = opener.open(req, timeout=120)
+        else:
+            opener = urllib.request.build_opener(https_handler, http_handler)
+            resp = opener.open(req, timeout=120)
+        raw = resp.read().decode("utf-8")
+        data = json.loads(raw)
+        try:
+            audio_url = data["output"]["audio"]["url"]
+        except Exception:
+            audio_url = ""
+        if not audio_url:
+            return b""
+        req2 = urllib.request.Request(audio_url, method="GET")
+        try:
+            if proxy:
+                proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+                opener = urllib.request.build_opener(proxy_handler, https_handler, http_handler)
+                resp2 = opener.open(req2, timeout=120)
+            else:
+                opener = urllib.request.build_opener(https_handler, http_handler)
+                resp2 = opener.open(req2, timeout=120)
+            return resp2.read()
+        except Exception as e:
+            log(f"[tts] media download via proxy failed: {e}, retry direct")
+            no_proxy = urllib.request.ProxyHandler({})
+            opener = urllib.request.build_opener(no_proxy, https_handler, http_handler)
+            resp2 = opener.open(req2, timeout=120)
+            return resp2.read()
     else:
-        voice = str(voice_map.get(prov, cfg.get("tts_voice", "alloy")))
-    url = f"{api_base}/audio/speech"
-    payload = {"model": model, "voice": voice, "input": text, "format": "mp3"}
-    body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=body, method="POST")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Authorization", f"Bearer {api_key}")
-    proxy = cfg.get("proxy", "").strip()
-    ctx = ssl.create_default_context()
-    https_handler = urllib.request.HTTPSHandler(context=ctx)
-    if proxy:
-        proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-        opener = urllib.request.build_opener(proxy_handler, https_handler)
-        resp = opener.open(req, timeout=120)
-    else:
-        opener = urllib.request.build_opener(https_handler)
-        resp = opener.open(req, timeout=120)
-    audio_bytes = resp.read()
-    return audio_bytes
+        api_base = get_api_base_for(prov, cfg)
+        url = f"{api_base}/audio/speech"
+        payload = {"model": model, "voice": voice, "input": text, "format": "mp3"}
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=body, method="POST")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Authorization", f"Bearer {api_key}")
+        proxy = _proxy_addr_for(prov, cfg)
+        ctx = ssl.create_default_context()
+        https_handler = urllib.request.HTTPSHandler(context=ctx)
+        if proxy:
+            proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+            opener = urllib.request.build_opener(proxy_handler, https_handler)
+            resp = opener.open(req, timeout=120)
+        else:
+            opener = urllib.request.build_opener(https_handler)
+            resp = opener.open(req, timeout=120)
+        return resp.read()
 
 def call_image(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> bytes:
     provider = str(cfg.get("image_provider", "openai_compatible")).strip() or "openai_compatible"
@@ -280,7 +339,7 @@ def call_image(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> bytes:
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
     req.add_header("Authorization", f"Bearer {api_key}")
-    proxy = cfg.get("proxy", "").strip()
+    proxy = _proxy_addr_for(prov, cfg)
     ctx = ssl.create_default_context()
     https_handler = urllib.request.HTTPSHandler(context=ctx)
     if proxy:
@@ -297,24 +356,20 @@ def call_image(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> bytes:
     img_bytes = base64.b64decode(b64)
     return img_bytes
 
-def _http_post_json(url: str, data: Dict[str, Any], api_key: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """使用 urllib 调 OpenAI API，支持 HTTP 代理（通过 config.json 的 proxy 字段）。"""
+def _http_post_json(url: str, data: Dict[str, Any], api_key: str, proxy_addr: str) -> Dict[str, Any]:
     body = json.dumps(data).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
     req.add_header("Authorization", f"Bearer {api_key}")
 
-    proxy = cfg.get("proxy", "").strip()
-
-    # SSL 上下文
     ctx = ssl.create_default_context()
     https_handler = urllib.request.HTTPSHandler(context=ctx)
 
-    if proxy:
-        log(f"[http] use proxy={proxy} for url={url}")
+    if proxy_addr:
+        log(f"[http] use proxy={proxy_addr} for url={url}")
         proxy_handler = urllib.request.ProxyHandler({
-            "http": proxy,
-            "https": proxy,
+            "http": proxy_addr,
+            "https": proxy_addr,
         })
         opener = urllib.request.build_opener(proxy_handler, https_handler)
         resp = opener.open(req, timeout=120)
@@ -327,6 +382,22 @@ def _http_post_json(url: str, data: Dict[str, Any], api_key: str, cfg: Dict[str,
     return json.loads(raw)
 
 
+
+def _str_field(v: Any) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v.strip()
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, list):
+        return ", ".join(_str_field(x) for x in v).strip()
+    if isinstance(v, dict):
+        try:
+            return json.dumps(v, ensure_ascii=False)
+        except Exception:
+            return str(v)
+    return str(v).strip()
 
 def call_openai_vocab(word: str, cfg: Dict[str, Any]) -> Dict[str, str]:
     """
@@ -355,7 +426,8 @@ def call_openai_vocab(word: str, cfg: Dict[str, Any]) -> Dict[str, str]:
     }
 
     log(f"[vocab] request payload for word={word!r}")
-    resp = _http_post_json(url, payload, api_key, cfg)
+    proxy_addr = _proxy_addr_for("openai", cfg)
+    resp = _http_post_json(url, payload, api_key, proxy_addr)
     content = resp["choices"][0]["message"]["content"]
     data = json.loads(content)
 
@@ -584,32 +656,42 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> 
 
     # ---- Word Audio ----
     if enable_tts_word:
-        raw_audio_name = f"{word.strip().lower()}_word.mp3"
+        prov_cfg = str(cfg.get("tts_provider", "openai_compatible")).strip() or "openai_compatible"
+        prov = prov_cfg if prov_cfg != "openai_compatible" else "openai"
+        ext = "wav" if prov == "qwen" else "mp3"
+        raw_audio_name = f"{word.strip().lower()}_word.{ext}"
 
-        audio_name = ensure_media_file(
-            col,
-            raw_audio_name,
-            lambda: call_tts(f"{word}.", cfg)
-        )
-
-        note[f_audio] = f"[sound:{audio_name}]"
-        log(f"[note] wrote word audio: {audio_name}")
+        try:
+            audio_name = ensure_media_file(
+                col,
+                raw_audio_name,
+                lambda: call_tts(f"{word}.", cfg)
+            )
+            note[f_audio] = f"[sound:{audio_name}]"
+            log(f"[note] wrote word audio: {audio_name}")
+        except Exception:
+            note[f_audio] = ""
     else:
         note[f_audio] = ""
         log("[note] skip word audio per config")
 
     # 例句语音
     if example_text and enable_tts_example:
-        raw_example_audio = f"{word.strip().lower()}_example.mp3"
+        prov_cfg = str(cfg.get("tts_provider", "openai_compatible")).strip() or "openai_compatible"
+        prov = prov_cfg if prov_cfg != "openai_compatible" else "openai"
+        ext = "wav" if prov == "qwen" else "mp3"
+        raw_example_audio = f"{word.strip().lower()}_example.{ext}"
 
-        example_audio_name = ensure_media_file(
-            col,
-            raw_example_audio,
-            lambda: call_tts(example_text, cfg)
-        )
-
-        note[f_audio_example] = f"[sound:{example_audio_name}]"
-        log(f"[note] wrote example audio: {example_audio_name}")
+        try:
+            example_audio_name = ensure_media_file(
+                col,
+                raw_example_audio,
+                lambda: call_tts(example_text, cfg)
+            )
+            note[f_audio_example] = f"[sound:{example_audio_name}]"
+            log(f"[note] wrote example audio: {example_audio_name}")
+        except Exception:
+            note[f_audio_example] = ""
     elif example_text:
         note[f_audio_example] = ""
         log("[note] skip example audio per config")
