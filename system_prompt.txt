@@ -14,7 +14,7 @@ JSON schema:
   "meaning": "short English definition",
   "example": "one short sentence using the word in the most natural register (formal/informal/spoken/written as appropriate)",
   "phonetic": "IPA transcription like /məˈtɪkjʊləs/",
-  "synonyms": "1–2 sentence English paraphrase or near-synonyms in plain text, matching the same style",
+  "synonyms": "3–6 English synonyms or near-synonym words that match the same part of speech. Use only words or very short phrases (max 2 words). Absolutely no sentences and no definitions.",
   "notesCN": "natural Chinese translation of the example sentence"
 }
 
