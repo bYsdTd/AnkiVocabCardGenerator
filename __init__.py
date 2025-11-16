@@ -11,7 +11,7 @@ from aqt import mw, gui_hooks
 from aqt.qt import QAction, QInputDialog, qconnect
 from aqt.utils import tooltip
 import random
-
+import string
 
 # ---------------- 简单日志工具：写到插件目录的 debug.log ---------------- #
 
@@ -303,6 +303,34 @@ def call_openai_image(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> b
     return img_bytes
 
 
+def make_cloze_from_word(word: str) -> str:
+    """
+    根据单词生成一个简单的拼写挖空版本：
+    - 保留首尾字母
+    - 从中间随机挖掉 30–60% 的字母（只挖字母）
+    - 长度 <= 3 的词直接返回原词
+    """
+    w = word.strip()
+    if len(w) <= 3:
+        return w
+
+    chars = list(w)
+    indices = [i for i, ch in enumerate(chars) if ch.lower() in string.ascii_lowercase]
+
+    # 不挖第一和最后一个字母
+    inner_indices = [i for i in indices if i not in (0, len(chars)-1)]
+    if not inner_indices:
+        return w
+
+    # 挖掉 30%-60% 的中间字母
+    n_to_hide = max(1, int(len(inner_indices) * random.uniform(0.7, 0.8)))
+    hide_indices = set(random.sample(inner_indices, n_to_hide))
+
+    for i in hide_indices:
+        chars[i] = "_"
+
+    return "".join(chars)
+
 
 # ---------------- 创建 Note ---------------- #
 
@@ -325,6 +353,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> 
     f_audio_example = cfg.get("field_audio_example", "AudioExample")
     f_synonyms = cfg.get("field_synonyms", "Synonyms")
     f_notes_cn = cfg.get("field_notes_cn", "NotesCN")
+    f_word_cloze = cfg.get("field_word_cloze", "WordCloze")
 
     # 找 NoteType
     notetype = col.models.by_name(model_name)
@@ -341,6 +370,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> 
     note[f_phonetic] = info.get("phonetic", "")
     note[f_synonyms] = info.get("synonyms", "")
     note[f_notes_cn] = info.get("notesCN", "")
+    note[f_word_cloze] = make_cloze_from_word(word)
 
     # 媒体写入
     example_text = info.get("example", "")
