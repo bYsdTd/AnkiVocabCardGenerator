@@ -56,6 +56,25 @@ def _read_env_file_key() -> str:
         return ""
     return ""
 
+def _read_env_file_var(varname: str) -> str:
+    base = os.path.dirname(__file__)
+    path = os.path.join(base, ".env")
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                s = line.strip()
+                if not s or s.startswith("#"):
+                    continue
+                if "=" in s:
+                    k, v = s.split("=", 1)
+                    if k.strip() == varname:
+                        return v.strip().strip('"').strip("'")
+    except Exception:
+        return ""
+    return ""
+
 def _read_system_prompt() -> str:
     base = os.path.dirname(__file__)
     path = os.path.join(base, "system_prompt.txt")
@@ -93,9 +112,190 @@ def resolve_api_key(cfg: Dict[str, Any]) -> str:
     key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not key:
         key = _read_env_file_key().strip()
-    if not key:
-        key = str(cfg.get("openai_api_key", "")).strip()
     return key
+
+def get_api_base_for(provider: str, cfg: Dict[str, Any]) -> str:
+    bases = cfg.get("api_bases", {}) or {}
+    if provider in bases and str(bases[provider]).strip():
+        return str(bases[provider]).strip()
+    return cfg.get("api_base", "https://api.openai.com/v1")
+
+def resolve_api_key_for(provider: str, cfg: Dict[str, Any]) -> str:
+    env_map = {
+        "openai": "OPENAI_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        "qwen": "DASHSCOPE_API_KEY",
+        "doubao": "DOUBAO_API_KEY",
+        "kimi": "MOONSHOT_API_KEY",
+        "grok": "XAI_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+    }
+    env_name = env_map.get(provider, "OPENAI_API_KEY")
+    key = os.environ.get(env_name, "").strip()
+    if not key:
+        key = _read_env_file_var(env_name).strip()
+    if not key and provider == "openai":
+        key = resolve_api_key(cfg)
+    return key
+
+def _openai_compatible_vocab(word: str, cfg: Dict[str, Any], provider: str) -> Dict[str, str]:
+    api_base = get_api_base_for(provider, cfg)
+    api_key = resolve_api_key_for(provider, cfg)
+    models = cfg.get("text_models", {}) or {}
+    model = str(models.get(provider, cfg.get("text_model", "gpt-4o-mini")))
+    url = f"{api_base}/chat/completions"
+    system_msg = _read_system_prompt()
+    params = cfg.get("text_params", {}) or {}
+    p = params.get(provider, {}) or {}
+    temperature = float(p.get("temperature", 0.4))
+    response_format_type = str(p.get("response_format", "json_object"))
+    payload = {
+        "model": model,
+        "response_format": {"type": response_format_type},
+        "messages": [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": f"WORD: {word.strip()}"},
+        ],
+        "temperature": temperature,
+    }
+    resp = _http_post_json(url, payload, api_key, cfg)
+    content = resp["choices"][0]["message"]["content"]
+    data = json.loads(content)
+    return {
+        "meaning": data.get("meaning", "").strip(),
+        "example": data.get("example", "").strip(),
+        "phonetic": data.get("phonetic", "").strip(),
+        "synonyms": data.get("synonyms", "").strip(),
+        "notesCN": data.get("notesCN", "").strip(),
+    }
+
+def _gemini_vocab(word: str, cfg: Dict[str, Any]) -> Dict[str, str]:
+    api_base = get_api_base_for("gemini", cfg)
+    api_key = resolve_api_key_for("gemini", cfg)
+    models = cfg.get("text_models", {}) or {}
+    model = str(models.get("gemini", cfg.get("text_model", "gemini-1.5-flash")))
+    url = f"{api_base}/v1beta/models/{model}:generateContent?key={api_key}"
+    system_msg = _read_system_prompt()
+    prompt = f"{system_msg}\nWORD: {word.strip()}\n请仅返回JSON对象。"
+    params = cfg.get("text_params", {}) or {}
+    p = params.get("gemini", {}) or {}
+    temperature = float(p.get("temperature", 0.4))
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": temperature},
+    }
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    proxy = cfg.get("proxy", "").strip()
+    ctx = ssl.create_default_context()
+    https_handler = urllib.request.HTTPSHandler(context=ctx)
+    if proxy:
+        proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+        opener = urllib.request.build_opener(proxy_handler, https_handler)
+        resp = opener.open(req, timeout=120)
+    else:
+        opener = urllib.request.build_opener(https_handler)
+        resp = opener.open(req, timeout=120)
+    raw = resp.read().decode("utf-8")
+    out = json.loads(raw)
+    text = ""
+    try:
+        text = out["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception:
+        text = "{}"
+    try:
+        data = json.loads(text)
+    except Exception:
+        data = {}
+    return {
+        "meaning": str(data.get("meaning", "")).strip(),
+        "example": str(data.get("example", "")).strip(),
+        "phonetic": str(data.get("phonetic", "")).strip(),
+        "synonyms": str(data.get("synonyms", "")).strip(),
+        "notesCN": str(data.get("notesCN", "")).strip(),
+    }
+
+def call_text(word: str, cfg: Dict[str, Any]) -> Dict[str, str]:
+    provider = str(cfg.get("text_provider", "openai_compatible")).strip() or "openai_compatible"
+    if provider == "gemini":
+        return _gemini_vocab(word, cfg)
+    prov = provider if provider != "openai_compatible" else "openai"
+    return _openai_compatible_vocab(word, cfg, prov)
+
+def call_tts(text: str, cfg: Dict[str, Any]) -> bytes:
+    provider = str(cfg.get("tts_provider", "openai_compatible")).strip() or "openai_compatible"
+    prov = provider if provider != "openai_compatible" else "openai"
+    api_base = get_api_base_for(prov, cfg)
+    api_key = resolve_api_key_for(prov, cfg)
+    tts_models = cfg.get("tts_models", {}) or {}
+    model = str(tts_models.get(prov, cfg.get("tts_model", "gpt-4o-mini-tts")))
+    voices_map = cfg.get("tts_voices_map", {}) or {}
+    pool = voices_map.get(prov, []) or []
+    voice_map = cfg.get("tts_voice_map", {}) or {}
+    if pool:
+        voice = random.choice(pool)
+    else:
+        voice = str(voice_map.get(prov, cfg.get("tts_voice", "alloy")))
+    url = f"{api_base}/audio/speech"
+    payload = {"model": model, "voice": voice, "input": text, "format": "mp3"}
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", f"Bearer {api_key}")
+    proxy = cfg.get("proxy", "").strip()
+    ctx = ssl.create_default_context()
+    https_handler = urllib.request.HTTPSHandler(context=ctx)
+    if proxy:
+        proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+        opener = urllib.request.build_opener(proxy_handler, https_handler)
+        resp = opener.open(req, timeout=120)
+    else:
+        opener = urllib.request.build_opener(https_handler)
+        resp = opener.open(req, timeout=120)
+    audio_bytes = resp.read()
+    return audio_bytes
+
+def call_image(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> bytes:
+    provider = str(cfg.get("image_provider", "openai_compatible")).strip() or "openai_compatible"
+    prov = provider if provider != "openai_compatible" else "openai"
+    api_base = get_api_base_for(prov, cfg)
+    api_key = resolve_api_key_for(prov, cfg)
+    image_models = cfg.get("image_models", {}) or {}
+    model = str(image_models.get(prov, cfg.get("image_model", "dall-e-2")))
+    size_map = cfg.get("image_size_map", {}) or {}
+    size_cfg = str(size_map.get(prov, cfg.get("image_size", "256x256")))
+    allowed_sizes = {"256x256", "512x512", "1024x1024"}
+    size = size_cfg if size_cfg in allowed_sizes else "256x256"
+    url = f"{api_base}/images/generations"
+    meaning = info.get("meaning", "")
+    prompt = (
+        f"Create a very simple, clear, flat illustration that helps remember the English word "
+        f"'{word}' meaning: {meaning}. "
+        f"Use one concrete scene or object that suggests this idea. "
+        f"NO text, NO letters, NO numbers. Minimal style, high contrast, easy to recognize at small size."
+    )
+    payload = {"model": model, "prompt": prompt, "n": 1, "size": size}
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", f"Bearer {api_key}")
+    proxy = cfg.get("proxy", "").strip()
+    ctx = ssl.create_default_context()
+    https_handler = urllib.request.HTTPSHandler(context=ctx)
+    if proxy:
+        proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+        opener = urllib.request.build_opener(proxy_handler, https_handler)
+        resp = opener.open(req, timeout=120)
+    else:
+        opener = urllib.request.build_opener(https_handler)
+        resp = opener.open(req, timeout=120)
+    raw = resp.read().decode("utf-8")
+    data = json.loads(raw)
+    b64 = data["data"][0]["b64_json"]
+    import base64
+    img_bytes = base64.b64decode(b64)
+    return img_bytes
 
 def _http_post_json(url: str, data: Dict[str, Any], api_key: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
     """使用 urllib 调 OpenAI API，支持 HTTP 代理（通过 config.json 的 proxy 字段）。"""
@@ -183,7 +383,7 @@ def call_openai_tts(text: str, cfg: Dict[str, Any]) -> bytes:
         voice = cfg.get("tts_voice", "alloy")
 
 
-    url = f"{api_base}/audio/speech"
+    url = f"{api_base}"
 
     payload = {
         "model": model,
@@ -389,7 +589,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> 
         audio_name = ensure_media_file(
             col,
             raw_audio_name,
-            lambda: call_openai_tts(f"{word}.", cfg)
+            lambda: call_tts(f"{word}.", cfg)
         )
 
         note[f_audio] = f"[sound:{audio_name}]"
@@ -405,7 +605,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> 
         example_audio_name = ensure_media_file(
             col,
             raw_example_audio,
-            lambda: call_openai_tts(example_text, cfg)
+            lambda: call_tts(example_text, cfg)
         )
 
         note[f_audio_example] = f"[sound:{example_audio_name}]"
@@ -430,7 +630,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> 
             image_name = ensure_media_file(
                 col,
                 raw_image_name,
-                lambda: call_openai_image(word, info, cfg)
+                lambda: call_image(word, info, cfg)
             )
 
             note[f_image] = image_name
@@ -459,11 +659,14 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> 
 
 def _background_create_card(word: str) -> None:
     cfg = get_config()
-    if not resolve_api_key(cfg):
+    prov_cfg = str(cfg.get("text_provider", "openai_compatible")).strip() or "openai_compatible"
+    prov = prov_cfg if prov_cfg != "openai_compatible" else "openai"
+    key = resolve_api_key_for(prov, cfg)
+    if not key:
         mw.taskman.run_on_main(
-            lambda: tooltip("请先在 config.json 中设置 openai_api_key")
+            lambda: tooltip("请在插件目录 .env 中设置对应 API_KEY")
         )
-        log("[bg] openai_api_key missing in config")
+        log("[bg] api key missing for text provider")
         return
 
     word_clean = word.strip()
@@ -476,7 +679,7 @@ def _background_create_card(word: str) -> None:
 
     try:
         # Step 1: OpenAI 生成文本信息
-        info = call_openai_vocab(word_clean, cfg)
+        info = call_text(word_clean, cfg)
         log(f"[bg] vocab info received: {info}")
 
         # Step 2: 生成 TTS + 创建 Note
