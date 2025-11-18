@@ -1,20 +1,51 @@
 import json
 import ssl
 import urllib.request
+import os
 from typing import Dict, Any
 
 from . import TTSAdapter
 from .. import resolve_api_key_for, get_audio_api_base_for, _proxy_addr_for, log
 
+def _load_json(path: str) -> Dict[str, Any]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _adapter_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    base = os.path.dirname(__file__)
+    defaults = _load_json(os.path.join(base, "qwen_config.json"))
+    adapters = cfg.get("adapters", {}) or {}
+    tts_cfg = adapters.get("tts", {}) or {}
+    override = tts_cfg.get("qwen", {}) or {}
+    merged = {**defaults, **override}
+    models = cfg.get("tts_models", {}) or {}
+    voices_map = cfg.get("tts_voices_map", {}) or {}
+    voice_map = cfg.get("tts_voice_map", {}) or {}
+    if "qwen" in models:
+        merged["model"] = str(models.get("qwen"))
+    elif "tts_model" in cfg:
+        merged["model"] = str(cfg.get("tts_model"))
+    if "qwen" in voice_map:
+        merged["default_voice"] = str(voice_map.get("qwen"))
+    elif "tts_voice" in cfg:
+        merged["default_voice"] = str(cfg.get("tts_voice"))
+    pool = voices_map.get("qwen", []) or []
+    if pool:
+        merged["voices_pool"] = pool
+    elif "tts_voices" in cfg:
+        merged["voices_pool"] = cfg.get("tts_voices", []) or []
+    return merged
+
 class QwenTTSAdapter(TTSAdapter):
     def synthesize(self, text: str, cfg: Dict[str, Any]) -> bytes:
         api_key = resolve_api_key_for("qwen", cfg)
-        tts_models = cfg.get("tts_models", {}) or {}
-        model = str(tts_models.get("qwen", cfg.get("tts_model", "qwen3-tts-flash")))
-        voices_map = cfg.get("tts_voices_map", {}) or {}
-        pool = voices_map.get("qwen", []) or []
-        voice_map = cfg.get("tts_voice_map", {}) or {}
-        voice = str(voice_map.get("qwen", cfg.get("tts_voice", "alloy")))
+        conf = _adapter_cfg(cfg)
+        model = str(conf.get("model", "qwen3-tts-flash"))
+        pool = conf.get("voices_pool", []) or []
+        voice = str(conf.get("default_voice", "Katerina"))
         if pool:
             try:
                 import random

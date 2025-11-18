@@ -36,36 +36,18 @@
     "grok": {"temperature": 0.4, "response_format": "json_object"},
     "gemini": {"temperature": 0.4}
   },
-  
   "text_model": "qwen-flash",
-
-  "tts_models": {
-    "openai": "gpt-4o-mini-tts",
-    "qwen": "qwen3-tts-flash"
-  },
-  "tts_model": "qwen3-tts-flash",
-  "tts_voice": "alloy",
-  "tts_voices_map": {
-    "openai": ["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse"],
-    "qwen": ["Jennifer", "Ryan", "Katerina"]
-  },
-  "tts_voice_map": {
-    "openai": "alloy",
-    "qwen": "Katerina"
-  },
-  "tts_voices": ["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse"],
+  
   "enable_tts_word": true,
   "enable_tts_example": true,
+  
+  "adapters": {
+    "tts": {
+    },
+    "image": {
+    }
+  },
 
-  "image_models": {
-    "openai": "dall-e-2",
-    "qwen": "qwen3-dall-e-2"
-  },
-  "image_model": "dall-e-2",
-  "image_size": "256x256",
-  "image_size_map": {
-    "openai": "256x256"
-  },
   "field_image": "Image",
   "enable_image": true,
 

@@ -552,7 +552,8 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> 
     if enable_tts_word:
         prov_cfg = str(cfg.get("tts_provider", "openai_compatible")).strip() or "openai_compatible"
         prov = prov_cfg if prov_cfg != "openai_compatible" else "openai"
-        ext = "wav" if prov == "qwen" else "mp3"
+        from .tts import get_tts_format
+        ext = get_tts_format(prov, cfg)
         raw_audio_name = f"{word.strip().lower()}_word.{ext}"
 
         try:
@@ -573,7 +574,8 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> 
     if example_text and enable_tts_example:
         prov_cfg = str(cfg.get("tts_provider", "openai_compatible")).strip() or "openai_compatible"
         prov = prov_cfg if prov_cfg != "openai_compatible" else "openai"
-        ext = "wav" if prov == "qwen" else "mp3"
+        from .tts import get_tts_format
+        ext = get_tts_format(prov, cfg)
         raw_example_audio = f"{word.strip().lower()}_example.{ext}"
 
         try:

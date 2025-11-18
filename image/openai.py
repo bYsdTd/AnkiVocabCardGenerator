@@ -1,10 +1,38 @@
 import json
 import ssl
 import urllib.request
+import os
 from typing import Dict, Any
 
 from . import ImageAdapter
 from .. import get_api_base_for, resolve_api_key_for, _proxy_addr_for
+
+def _load_json(path: str) -> Dict[str, Any]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _adapter_cfg(provider: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
+    base = os.path.dirname(__file__)
+    fname = f"{provider}_config.json"
+    defaults = _load_json(os.path.join(base, fname))
+    adapters = cfg.get("adapters", {}) or {}
+    image_cfg = adapters.get("image", {}) or {}
+    override = image_cfg.get(provider, {}) or {}
+    merged = {**defaults, **override}
+    models = cfg.get("image_models", {}) or {}
+    size_map = cfg.get("image_size_map", {}) or {}
+    if provider in models:
+        merged["model"] = str(models.get(provider))
+    elif "image_model" in cfg:
+        merged["model"] = str(cfg.get("image_model"))
+    if provider in size_map:
+        merged["size"] = str(size_map.get(provider))
+    elif "image_size" in cfg:
+        merged["size"] = str(cfg.get("image_size"))
+    return merged
 
 class OpenAICompatibleImageAdapter(ImageAdapter):
     def __init__(self, provider: str):
@@ -12,10 +40,9 @@ class OpenAICompatibleImageAdapter(ImageAdapter):
     def generate(self, word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> bytes:
         api_base = get_api_base_for(self.provider, cfg)
         api_key = resolve_api_key_for(self.provider, cfg)
-        image_models = cfg.get("image_models", {}) or {}
-        model = str(image_models.get(self.provider, cfg.get("image_model", "dall-e-2")))
-        size_map = cfg.get("image_size_map", {}) or {}
-        size_cfg = str(size_map.get(self.provider, cfg.get("image_size", "256x256")))
+        conf = _adapter_cfg(self.provider, cfg)
+        model = str(conf.get("model", "dall-e-2"))
+        size_cfg = str(conf.get("size", "256x256"))
         allowed_sizes = {"256x256", "512x512", "1024x1024"}
         size = size_cfg if size_cfg in allowed_sizes else "256x256"
         url = f"{api_base}/images/generations"

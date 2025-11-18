@@ -2,22 +2,54 @@ import json
 import ssl
 import urllib.request
 import random
+import os
 from typing import Dict, Any
 
 from . import TTSAdapter
 from .. import resolve_api_key_for, get_api_base_for, _proxy_addr_for
+
+def _load_json(path: str) -> Dict[str, Any]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _adapter_cfg(provider: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
+    base = os.path.dirname(__file__)
+    fname = f"{provider}_config.json"
+    defaults = _load_json(os.path.join(base, fname))
+    adapters = cfg.get("adapters", {}) or {}
+    tts_cfg = adapters.get("tts", {}) or {}
+    override = tts_cfg.get(provider, {}) or {}
+    merged = {**defaults, **override}
+    models = cfg.get("tts_models", {}) or {}
+    voices_map = cfg.get("tts_voices_map", {}) or {}
+    voice_map = cfg.get("tts_voice_map", {}) or {}
+    if provider in models:
+        merged["model"] = str(models.get(provider))
+    elif "tts_model" in cfg:
+        merged["model"] = str(cfg.get("tts_model"))
+    if provider in voice_map:
+        merged["default_voice"] = str(voice_map.get(provider))
+    elif "tts_voice" in cfg:
+        merged["default_voice"] = str(cfg.get("tts_voice"))
+    pool = voices_map.get(provider, []) or []
+    if pool:
+        merged["voices_pool"] = pool
+    elif "tts_voices" in cfg:
+        merged["voices_pool"] = cfg.get("tts_voices", []) or []
+    return merged
 
 class OpenAICompatibleTTSAdapter(TTSAdapter):
     def __init__(self, provider: str):
         self.provider = provider
     def synthesize(self, text: str, cfg: Dict[str, Any]) -> bytes:
         api_key = resolve_api_key_for(self.provider, cfg)
-        tts_models = cfg.get("tts_models", {}) or {}
-        model = str(tts_models.get(self.provider, cfg.get("tts_model", "gpt-4o-mini-tts")))
-        voices_map = cfg.get("tts_voices_map", {}) or {}
-        pool = voices_map.get(self.provider, []) or []
-        voice_map = cfg.get("tts_voice_map", {}) or {}
-        voice = str(voice_map.get(self.provider, cfg.get("tts_voice", "alloy")))
+        conf = _adapter_cfg(self.provider, cfg)
+        model = str(conf.get("model", "gpt-4o-mini-tts"))
+        pool = conf.get("voices_pool", []) or []
+        voice = str(conf.get("default_voice", "alloy"))
         if pool:
             try:
                 voice = random.choice(pool)

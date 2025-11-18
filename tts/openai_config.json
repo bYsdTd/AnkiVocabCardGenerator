@@ -1,0 +1,9 @@
+{
+  "model": "gpt-4o-mini-tts",
+  "default_voice": "alloy",
+  "voices_pool": [
+    "alloy", "ash", "ballad", "coral", "echo", "fable",
+    "onyx", "nova", "sage", "shimmer", "verse"
+  ],
+  "format": "mp3"
+}

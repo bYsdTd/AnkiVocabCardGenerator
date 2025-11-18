@@ -1,0 +1,6 @@
+{
+  "model": "qwen3-tts-flash",
+  "default_voice": "Katerina",
+  "voices_pool": ["Jennifer", "Ryan", "Katerina"],
+  "format": "wav"
+}
