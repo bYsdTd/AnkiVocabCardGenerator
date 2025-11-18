@@ -1,6 +1,7 @@
 import json
 import ssl
 import urllib.request
+import urllib.error
 import os
 from typing import Dict, Any
 
@@ -62,13 +63,21 @@ class QwenImageAdapter(ImageAdapter):
         ctx = ssl.create_default_context()
         https_handler = urllib.request.HTTPSHandler(context=ctx)
         http_handler = urllib.request.HTTPHandler()
-        if proxy:
-            proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-            opener = urllib.request.build_opener(proxy_handler, https_handler, http_handler)
-            resp = opener.open(req, timeout=120)
-        else:
-            opener = urllib.request.build_opener(https_handler, http_handler)
-            resp = opener.open(req, timeout=120)
+        try:
+            if proxy:
+                proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+                opener = urllib.request.build_opener(proxy_handler, https_handler, http_handler)
+                resp = opener.open(req, timeout=120)
+            else:
+                opener = urllib.request.build_opener(https_handler, http_handler)
+                resp = opener.open(req, timeout=120)
+        except urllib.error.HTTPError as e:
+            try:
+                err_body = e.read().decode("utf-8", errors="ignore")
+            except Exception:
+                err_body = "<no body>"
+            log(f"[image] qwen HTTPError {e.code}: {err_body}")
+            raise
         raw = resp.read().decode("utf-8")
         data = json.loads(raw)
         try:
