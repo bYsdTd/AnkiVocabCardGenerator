@@ -1,4 +1,4 @@
 {
-  "model": "qwen3-dall-e-2",
-  "size": "256x256"
+  "model": "qwen-image-plus",
+  "size": "1328x1328"
 }

@@ -38,11 +38,11 @@ class QwenImageAdapter(ImageAdapter):
     def generate(self, word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> bytes:
         api_key = resolve_api_key_for("qwen", cfg)
         conf = _adapter_cfg(cfg)
-        model = str(conf.get("model", "qwen3-dall-e-2"))
-        size_cfg = str(conf.get("size", "256x256"))
+        model = str(conf.get("model", "qwen-image-plus"))
+        size_cfg = str(conf.get("size", "1328x1328"))
         size_dash = size_cfg.replace("x", "*")
         base_image = get_audio_api_base_for("qwen", cfg)
-        url = f"{base_image}/services/aigc/image-generation/generation"
+        url = f"{base_image}/services/aigc/multimodal-generation/generation"
         meaning = info.get("meaning", "")
         prompt = (
             f"Create a very simple, clear, flat illustration that helps remember the English word "
@@ -52,11 +52,26 @@ class QwenImageAdapter(ImageAdapter):
         )
         payload = {
             "model": model,
-            "input": {"prompt": prompt, "size": size_dash},
-            "parameters": {"image_num": 1}
+            "input": {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"text": prompt}
+                        ]
+                    }
+                ]
+            },
+            "parameters": {
+                "negative_prompt": "",
+                "prompt_extend": True,
+                "watermark": False,
+                "size": size_dash
+            }
         }
         body = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=body, method="POST")
+        log(f"[image] qwen image generation request: url={url}, body={body.decode('utf-8')}")
         req.add_header("Content-Type", "application/json")
         req.add_header("Authorization", f"Bearer {api_key}")
         proxy = _proxy_addr_for("qwen", cfg)
@@ -81,24 +96,14 @@ class QwenImageAdapter(ImageAdapter):
         raw = resp.read().decode("utf-8")
         data = json.loads(raw)
         try:
-            results = data["output"]["results"]
+            choices = data["output"]["choices"]
+            msg = choices[0]["message"]
+            content = msg["content"][0]
+            url2 = content.get("image", "")
         except Exception:
-            results = []
-        if not results:
-            try:
-                b64 = data["data"][0]["b64_json"]
-                import base64
-                return base64.b64decode(b64)
-            except Exception:
-                raise RuntimeError("qwen image generation: no results returned")
-        first = results[0]
-        url2 = first.get("url", "")
+            url2 = ""
         if not url2:
-            b64 = first.get("b64", "")
-            if b64:
-                import base64
-                return base64.b64decode(b64)
-            raise RuntimeError("qwen image generation: no url or b64 in results")
+            raise RuntimeError("qwen image generation: missing image URL in response")
         req2 = urllib.request.Request(url2, method="GET")
         try:
             if proxy:
