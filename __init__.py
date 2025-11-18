@@ -8,7 +8,7 @@ import urllib.request
 from typing import Dict, Any
 
 from aqt import mw, gui_hooks
-from aqt.qt import QAction, QInputDialog, qconnect
+from aqt.qt import QAction, QDialog, QVBoxLayout, QLabel, QLineEdit, QCheckBox, QDialogButtonBox, qconnect
 from aqt.utils import tooltip
 import random
 import string
@@ -635,7 +635,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> 
 
 # ---------------- 后台任务 & 菜单 ---------------- #
 
-def _background_create_card(word: str) -> None:
+def _background_create_card(word: str, enable_image: bool) -> None:
     cfg = get_config()
     prov_cfg = str(cfg.get("text_provider", "openai_compatible")).strip() or "openai_compatible"
     prov = prov_cfg if prov_cfg != "openai_compatible" else "openai"
@@ -656,12 +656,11 @@ def _background_create_card(word: str) -> None:
     log(f"[bg] start create card for word={word_clean!r}")
 
     try:
-        # Step 1: OpenAI 生成文本信息
-        info = call_text(word_clean, cfg)
+        cfg2 = dict(cfg)
+        cfg2["enable_image"] = enable_image
+        info = call_text(word_clean, cfg2)
         log(f"[bg] vocab info received: {info}")
-
-        # Step 2: 生成 TTS + 创建 Note
-        _create_vocab_note(word_clean, info, cfg)
+        _create_vocab_note(word_clean, info, cfg2)
 
         mw.taskman.run_on_main(
             lambda word_clean=word_clean: tooltip(f"已创建卡片：{word_clean} ✅")
@@ -675,15 +674,32 @@ def _background_create_card(word: str) -> None:
 
 
 def on_menu_triggered() -> None:
-    word, ok = QInputDialog.getText(
-        mw, "Create Vocab Card", "请输入一个英文单词："
+    cfg = get_config()
+    dlg = QDialog(mw)
+    dlg.setWindowTitle("Create Vocab Card")
+    layout = QVBoxLayout(dlg)
+    label = QLabel("请输入一个英文单词：", dlg)
+    edit = QLineEdit(dlg)
+    cb = QCheckBox("生成助记图", dlg)
+    cb.setChecked(bool(cfg.get("enable_image", True)))
+    layout.addWidget(label)
+    layout.addWidget(edit)
+    layout.addWidget(cb)
+    btns = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+        parent=dlg,
     )
-    if not ok or not word.strip():
+    layout.addWidget(btns)
+    qconnect(btns.accepted, dlg.accept)
+    qconnect(btns.rejected, dlg.reject)
+    if dlg.exec() != QDialog.DialogCode.Accepted:
         return
-
-    # 后台线程执行（避免 UI 卡死）
+    word = edit.text()
+    if not word.strip():
+        return
+    enable_image = cb.isChecked()
     mw.taskman.run_in_background(
-        lambda: _background_create_card(word),
+        lambda: _background_create_card(word, enable_image),
         lambda _: None,
     )
 
