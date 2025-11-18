@@ -8,7 +8,7 @@
   },
   "text_provider": "qwen",
   "tts_provider": "qwen",
-  "image_provider": "openai",
+  "image_provider": "qwen",
   "api_bases": {
     "openai": "https://api.openai.com/v1",
     "deepseek": "https://api.deepseek.com/v1",
@@ -58,7 +58,8 @@
   "enable_tts_example": true,
 
   "image_models": {
-    "openai": "dall-e-2"
+    "openai": "dall-e-2",
+    "qwen": "qwen3-dall-e-2"
   },
   "image_model": "dall-e-2",
   "image_size": "256x256",
@@ -66,7 +67,7 @@
     "openai": "256x256"
   },
   "field_image": "Image",
-  "enable_image": false,
+  "enable_image": true,
 
   "deck_name": "Vocab",
   "note_type": "VocabularyPro",

@@ -239,122 +239,16 @@ def call_text(word: str, cfg: Dict[str, Any]) -> Dict[str, str]:
 def call_tts(text: str, cfg: Dict[str, Any]) -> bytes:
     provider = str(cfg.get("tts_provider", "openai_compatible")).strip() or "openai_compatible"
     prov = provider if provider != "openai_compatible" else "openai"
-    api_key = resolve_api_key_for(prov, cfg)
-    tts_models = cfg.get("tts_models", {}) or {}
-    model = str(tts_models.get(prov, cfg.get("tts_model", "gpt-4o-mini-tts")))
-    voices_map = cfg.get("tts_voices_map", {}) or {}
-    pool = voices_map.get(prov, []) or []
-    voice_map = cfg.get("tts_voice_map", {}) or {}
-    voice = str(voice_map.get(prov, cfg.get("tts_voice", "alloy")))
-    if pool:
-        try:
-            voice = random.choice(pool)
-        except Exception:
-            pass
-
-    if prov == "qwen":
-        base_audio = get_audio_api_base_for("qwen", cfg)
-        url = f"{base_audio}/services/aigc/multimodal-generation/generation"
-        payload = {"model": model, "input": {"text": text, "voice": voice}, "stream": False}
-        body = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(url, data=body, method="POST")
-        req.add_header("Content-Type", "application/json")
-        req.add_header("Authorization", f"Bearer {api_key}")
-        proxy = _proxy_addr_for("qwen", cfg)
-        ctx = ssl.create_default_context()
-        https_handler = urllib.request.HTTPSHandler(context=ctx)
-        http_handler = urllib.request.HTTPHandler()
-        if proxy:
-            proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-            opener = urllib.request.build_opener(proxy_handler, https_handler, http_handler)
-            resp = opener.open(req, timeout=120)
-        else:
-            opener = urllib.request.build_opener(https_handler, http_handler)
-            resp = opener.open(req, timeout=120)
-        raw = resp.read().decode("utf-8")
-        data = json.loads(raw)
-        try:
-            audio_url = data["output"]["audio"]["url"]
-        except Exception:
-            audio_url = ""
-        if not audio_url:
-            return b""
-        req2 = urllib.request.Request(audio_url, method="GET")
-        try:
-            if proxy:
-                proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-                opener = urllib.request.build_opener(proxy_handler, https_handler, http_handler)
-                resp2 = opener.open(req2, timeout=120)
-            else:
-                opener = urllib.request.build_opener(https_handler, http_handler)
-                resp2 = opener.open(req2, timeout=120)
-            return resp2.read()
-        except Exception as e:
-            log(f"[tts] media download via proxy failed: {e}, retry direct")
-            no_proxy = urllib.request.ProxyHandler({})
-            opener = urllib.request.build_opener(no_proxy, https_handler, http_handler)
-            resp2 = opener.open(req2, timeout=120)
-            return resp2.read()
-    else:
-        api_base = get_api_base_for(prov, cfg)
-        url = f"{api_base}/audio/speech"
-        payload = {"model": model, "voice": voice, "input": text, "format": "mp3"}
-        body = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(url, data=body, method="POST")
-        req.add_header("Content-Type", "application/json")
-        req.add_header("Authorization", f"Bearer {api_key}")
-        proxy = _proxy_addr_for(prov, cfg)
-        ctx = ssl.create_default_context()
-        https_handler = urllib.request.HTTPSHandler(context=ctx)
-        if proxy:
-            proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-            opener = urllib.request.build_opener(proxy_handler, https_handler)
-            resp = opener.open(req, timeout=120)
-        else:
-            opener = urllib.request.build_opener(https_handler)
-            resp = opener.open(req, timeout=120)
-        return resp.read()
+    from .tts import get_tts_adapter
+    adapter = get_tts_adapter(prov)
+    return adapter.synthesize(text, cfg)
 
 def call_image(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> bytes:
     provider = str(cfg.get("image_provider", "openai_compatible")).strip() or "openai_compatible"
     prov = provider if provider != "openai_compatible" else "openai"
-    api_base = get_api_base_for(prov, cfg)
-    api_key = resolve_api_key_for(prov, cfg)
-    image_models = cfg.get("image_models", {}) or {}
-    model = str(image_models.get(prov, cfg.get("image_model", "dall-e-2")))
-    size_map = cfg.get("image_size_map", {}) or {}
-    size_cfg = str(size_map.get(prov, cfg.get("image_size", "256x256")))
-    allowed_sizes = {"256x256", "512x512", "1024x1024"}
-    size = size_cfg if size_cfg in allowed_sizes else "256x256"
-    url = f"{api_base}/images/generations"
-    meaning = info.get("meaning", "")
-    prompt = (
-        f"Create a very simple, clear, flat illustration that helps remember the English word "
-        f"'{word}' meaning: {meaning}. "
-        f"Use one concrete scene or object that suggests this idea. "
-        f"NO text, NO letters, NO numbers. Minimal style, high contrast, easy to recognize at small size."
-    )
-    payload = {"model": model, "prompt": prompt, "n": 1, "size": size}
-    body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=body, method="POST")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Authorization", f"Bearer {api_key}")
-    proxy = _proxy_addr_for(prov, cfg)
-    ctx = ssl.create_default_context()
-    https_handler = urllib.request.HTTPSHandler(context=ctx)
-    if proxy:
-        proxy_handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-        opener = urllib.request.build_opener(proxy_handler, https_handler)
-        resp = opener.open(req, timeout=120)
-    else:
-        opener = urllib.request.build_opener(https_handler)
-        resp = opener.open(req, timeout=120)
-    raw = resp.read().decode("utf-8")
-    data = json.loads(raw)
-    b64 = data["data"][0]["b64_json"]
-    import base64
-    img_bytes = base64.b64decode(b64)
-    return img_bytes
+    from .image import get_image_adapter
+    adapter = get_image_adapter(prov)
+    return adapter.generate(word, info, cfg)
 
 def _http_post_json(url: str, data: Dict[str, Any], api_key: str, proxy_addr: str) -> Dict[str, Any]:
     body = json.dumps(data).encode("utf-8")
