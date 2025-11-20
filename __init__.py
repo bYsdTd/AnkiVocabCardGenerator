@@ -607,7 +607,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> 
 
             image_name = ensure_media_file(
                 col,
-                raw_image_name,
+                f"_{raw_image_name}",
                 lambda: call_image(word, info, cfg)
             )
 
