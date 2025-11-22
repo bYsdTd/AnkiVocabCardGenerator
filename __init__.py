@@ -5,6 +5,7 @@ import os
 import ssl
 import traceback
 import urllib.request
+import urllib.error
 from typing import Dict, Any
 
 from aqt import mw, gui_hooks
@@ -118,7 +119,11 @@ def get_api_base_for(provider: str, cfg: Dict[str, Any]) -> str:
     bases = cfg.get("api_bases", {}) or {}
     if provider in bases and str(bases[provider]).strip():
         return str(bases[provider]).strip()
-    return cfg.get("api_base", "https://api.openai.com/v1")
+    defaults = {
+        "openai": "https://api.openai.com/v1",
+        "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
+    }
+    return cfg.get("api_base", defaults.get(provider, "https://api.openai.com/v1"))
 
 def get_audio_api_base_for(provider: str, cfg: Dict[str, Any]) -> str:
     bases = cfg.get("api_bases_audio", {}) or {}
@@ -154,26 +159,48 @@ def _openai_compatible_vocab(word: str, cfg: Dict[str, Any], provider: str) -> D
     api_base = get_api_base_for(provider, cfg)
     api_key = resolve_api_key_for(provider, cfg)
     models = cfg.get("text_models", {}) or {}
-    model = str(models.get(provider, cfg.get("text_model", "gpt-4o-mini")))
-    url = f"{api_base}/chat/completions"
+    default_models = {"gemini": "gemini-2.0-flash"}
+    model = str(models.get(provider, cfg.get("text_model", default_models.get(provider, "gpt-4o-mini"))))
     system_msg = _read_system_prompt()
     params = cfg.get("text_params", {}) or {}
     p = params.get(provider, {}) or {}
     temperature = float(p.get("temperature", 0.4))
-    response_format_type = str(p.get("response_format", "json_object"))
+    response_format_type = str(p.get("response_format", "json_object")).strip()
     payload = {
         "model": model,
-        "response_format": {"type": response_format_type},
         "messages": [
             {"role": "system", "content": system_msg},
             {"role": "user", "content": f"WORD: {word.strip()}"},
         ],
         "temperature": temperature,
     }
+    if response_format_type:
+        payload["response_format"] = {"type": response_format_type}
     proxy_addr = _proxy_addr_for(provider, cfg)
-    resp = _http_post_json(url, payload, api_key, proxy_addr)
+    bases = [api_base]
+    if provider == "gemini":
+        if "openai" in api_base:
+            bases.append("https://generativelanguage.googleapis.com/v1beta")
+        else:
+            bases.append("https://generativelanguage.googleapis.com/v1beta/openai")
+    resp = None
+    last_err = None
+    for b in bases:
+        try:
+            url = f"{b}/chat/completions"
+            resp = _http_post_json(url, payload, api_key, proxy_addr)
+            break
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code == 404:
+                continue
+            raise
+    if resp is None:
+        raise last_err or RuntimeError("no response")
     content = resp["choices"][0]["message"]["content"]
-    data = json.loads(content)
+    content2 = _strip_code_fences(content)
+    log(f"[{provider}] raw response: {content2}")
+    data = json.loads(content2)
     return {
         "meaning": _str_field(data.get("meaning", "")),
         "example": _str_field(data.get("example", "")),
@@ -231,8 +258,6 @@ def _gemini_vocab(word: str, cfg: Dict[str, Any]) -> Dict[str, str]:
 
 def call_text(word: str, cfg: Dict[str, Any]) -> Dict[str, str]:
     provider = str(cfg.get("text_provider", "openai_compatible")).strip() or "openai_compatible"
-    if provider == "gemini":
-        return _gemini_vocab(word, cfg)
     prov = provider if provider != "openai_compatible" else "openai"
     return _openai_compatible_vocab(word, cfg, prov)
 
@@ -259,18 +284,38 @@ def _http_post_json(url: str, data: Dict[str, Any], api_key: str, proxy_addr: st
     ctx = ssl.create_default_context()
     https_handler = urllib.request.HTTPSHandler(context=ctx)
 
-    if proxy_addr:
-        log(f"[http] use proxy={proxy_addr} for url={url}")
-        proxy_handler = urllib.request.ProxyHandler({
-            "http": proxy_addr,
-            "https": proxy_addr,
-        })
-        opener = urllib.request.build_opener(proxy_handler, https_handler)
-        resp = opener.open(req, timeout=120)
-    else:
-        log(f"[http] no proxy for url={url}")
-        opener = urllib.request.build_opener(https_handler)
-        resp = opener.open(req, timeout=120)
+    def _open_with(opener):
+        return opener.open(req, timeout=120)
+
+    try:
+        if proxy_addr:
+            log(f"[http] use proxy={proxy_addr} for url={url}")
+            proxy_handler = urllib.request.ProxyHandler({
+                "http": proxy_addr,
+                "https": proxy_addr,
+            })
+            opener = urllib.request.build_opener(proxy_handler, https_handler)
+            resp = _open_with(opener)
+        else:
+            log(f"[http] no proxy for url={url}")
+            opener = urllib.request.build_opener(https_handler)
+            resp = _open_with(opener)
+    except urllib.error.HTTPError as e:
+        try:
+            err_body = e.read().decode("utf-8", errors="ignore")
+        except Exception:
+            err_body = "<no body>"
+        log(f"[http] HTTPError {e.code} for {url}: {err_body}")
+        if proxy_addr and e.code == 404:
+            try:
+                log(f"[http] retry without proxy for url={url}")
+                no_proxy = urllib.request.ProxyHandler({})
+                opener2 = urllib.request.build_opener(no_proxy, https_handler)
+                resp = _open_with(opener2)
+            except Exception:
+                raise
+        else:
+            raise
 
     raw = resp.read().decode("utf-8")
     return json.loads(raw)
@@ -292,6 +337,18 @@ def _str_field(v: Any) -> str:
         except Exception:
             return str(v)
     return str(v).strip()
+
+def _strip_code_fences(text: str) -> str:
+    s = str(text).strip()
+    if s.startswith("```"):
+        if s.startswith("```json"):
+            s = s[len("```json"):].strip()
+        else:
+            s = s[len("```"):].strip()
+        i = s.rfind("```")
+        if i != -1:
+            s = s[:i].strip()
+    return s
 
 def call_openai_vocab(word: str, cfg: Dict[str, Any]) -> Dict[str, str]:
     """

@@ -8,8 +8,11 @@ class ImageAdapter(ABC):
 
 from .openai import OpenAICompatibleImageAdapter
 from .qwen import QwenImageAdapter
+from .gemini import GeminiImageAdapter
 
 def get_image_adapter(provider: str) -> ImageAdapter:
     if provider == "qwen":
         return QwenImageAdapter()
+    if provider == "gemini":
+        return GeminiImageAdapter()
     return OpenAICompatibleImageAdapter(provider)
