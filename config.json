@@ -10,7 +10,7 @@
     "gemini": true
   },
   "text_provider": "gemini",
-  "tts_provider": "qwen",
+  "tts_provider": "gemini",
   "image_provider": "gemini",
   "api_bases": {
     "openai": "https://api.openai.com/v1",

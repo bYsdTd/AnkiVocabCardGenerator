@@ -10,10 +10,13 @@ class TTSAdapter(ABC):
 
 from .openai import OpenAICompatibleTTSAdapter
 from .qwen import QwenTTSAdapter
+from .gemini import GeminiTTSAdapter
 
 def get_tts_adapter(provider: str) -> TTSAdapter:
     if provider == "qwen":
         return QwenTTSAdapter()
+    if provider == "gemini":
+        return GeminiTTSAdapter()
     return OpenAICompatibleTTSAdapter(provider)
 
 def get_tts_format(provider: str, cfg: Dict[str, Any]) -> str:
