@@ -607,6 +607,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> 
 
     # ---- Word Audio ----
     if enable_tts_word:
+        mw.taskman.run_on_main(lambda: mw.progress.update(label="正在合成单词发音…"))
         prov_cfg = str(cfg.get("tts_provider", "openai_compatible")).strip() or "openai_compatible"
         prov = prov_cfg if prov_cfg != "openai_compatible" else "openai"
         from .tts import get_tts_format
@@ -629,6 +630,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> 
 
     # 例句语音
     if example_text and enable_tts_example:
+        mw.taskman.run_on_main(lambda: mw.progress.update(label="正在合成例句发音…"))
         prov_cfg = str(cfg.get("tts_provider", "openai_compatible")).strip() or "openai_compatible"
         prov = prov_cfg if prov_cfg != "openai_compatible" else "openai"
         from .tts import get_tts_format
@@ -653,6 +655,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> 
 
     # ---- Image: 助记图（可选） ----
     if cfg.get("enable_image", True):
+        mw.taskman.run_on_main(lambda: mw.progress.update(label="正在生成助记图…"))
         try:
             f_image = cfg.get("field_image", "Image")
             # img_bytes = call_openai_image(word, info, cfg)
@@ -715,8 +718,10 @@ def _background_create_card(word: str, enable_image: bool) -> None:
     try:
         cfg2 = dict(cfg)
         cfg2["enable_image"] = enable_image
+        mw.taskman.run_on_main(lambda word_clean=word_clean: mw.progress.update(label=f"正在生成 {word_clean} 的词义与示例…"))
         info = call_text(word_clean, cfg2)
         log(f"[bg] vocab info received: {info}")
+        mw.taskman.run_on_main(lambda: mw.progress.update(label="正在创建卡片并写入媒体…"))
         _create_vocab_note(word_clean, info, cfg2)
 
         mw.taskman.run_on_main(
@@ -755,9 +760,10 @@ def on_menu_triggered() -> None:
     if not word.strip():
         return
     enable_image = cb.isChecked()
+    mw.progress.start(label="正在生成卡片…", immediate=True)
     mw.taskman.run_in_background(
         lambda: _background_create_card(word, enable_image),
-        lambda _: None,
+        lambda _: mw.progress.finish(),
     )
 
 
