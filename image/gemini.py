@@ -16,10 +16,15 @@ class GeminiImageAdapter(ImageAdapter):
         url = f"{base}/models/{model}:generateContent"
         meaning = info.get("meaning", "")
         prompt = (
-            f"Create a very simple, clear, flat illustration that helps remember the English word "
-            f"'{word}' meaning: {meaning}. "
-            f"Use one concrete scene or object that suggests this idea. "
-            f"NO text, NO letters, NO numbers. Minimal style, high contrast, easy to recognize at small size."
+            f"Create an illustration to help remember the English word '{word}' (meaning: {meaning}). "
+            f"First, analyze the 'vibe' of the word to decide the art style: "
+            f"1. For concrete objects (e.g., fruit, tools), use 'Hyper-realistic product photography' style. "
+            f"2. For abstract concepts or emotions (e.g., freedom, thought), use 'Surrealist minimal vector' style. "
+            f"3. For actions or funny situations (e.g., jump, clumsy), use 'Exaggerated 3D Pixar-style cartoon'. "
+            f"4. For nature or vintage terms, use 'Watercolour' or 'Hand-drawn sketch' style. "
+            f"\n"
+            f"Make the image focused on a single subject. "
+            f"CRITICAL RULES: NO text, NO letters, NO numbers. Keep the composition simple, high contrast, and identifiable at a small size (thumbnail friendly)."
         )
         payload = {
             "contents": [{"parts": [{"text": prompt}]}]

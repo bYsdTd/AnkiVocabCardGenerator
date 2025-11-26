@@ -9,7 +9,7 @@ import urllib.error
 from typing import Dict, Any
 
 from aqt import mw, gui_hooks
-from aqt.qt import QAction, QDialog, QVBoxLayout, QLabel, QLineEdit, QCheckBox, QDialogButtonBox, qconnect
+from aqt.qt import QAction, QDialog, QVBoxLayout, QLabel, QLineEdit, QCheckBox, QDialogButtonBox, qconnect, QKeySequence
 from aqt.utils import tooltip
 import random
 import string
@@ -771,6 +771,7 @@ def setup_menu() -> None:
     """在 Tools 菜单下添加入口。"""
     log("[init] setup_menu called, adding menu item")
     action = QAction("OpenAI: Create Vocab Card", mw)
+    action.setShortcut(QKeySequence("Meta+G"))
     qconnect(action.triggered, on_menu_triggered)
     mw.form.menuTools.addAction(action)
 
