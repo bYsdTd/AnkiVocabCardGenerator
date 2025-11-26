@@ -9,7 +9,7 @@ import urllib.error
 from typing import Dict, Any
 
 from aqt import mw, gui_hooks
-from aqt.qt import QAction, QDialog, QVBoxLayout, QLabel, QLineEdit, QCheckBox, QDialogButtonBox, qconnect, QKeySequence
+from aqt.qt import QAction, QDialog, QVBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QCheckBox, QDialogButtonBox, qconnect, QKeySequence
 from aqt.utils import tooltip
 import random
 import string
@@ -21,7 +21,7 @@ def log(msg: str) -> None:
     try:
         base = os.path.dirname(__file__)
         path = os.path.join(base, "debug.log")
-        with open(path, "a", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(msg + "\n")
     except Exception:
         # logging 失败就算了，避免影响主流程
@@ -557,7 +557,7 @@ def make_cloze_from_word(word: str) -> str:
 
 # ---------------- 创建 Note ---------------- #
 
-def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> None:
+def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any], idx: int | None = None, total: int | None = None) -> None:
     """
     创建 VocabularyPro Note，写入到 Vocab 牌组。
     info: meaning / example / phonetic / synonyms / notesCN
@@ -607,7 +607,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> 
 
     # ---- Word Audio ----
     if enable_tts_word:
-        mw.taskman.run_on_main(lambda: mw.progress.update(label="正在合成单词发音…"))
+        mw.taskman.run_on_main(lambda idx=idx, total=total: mw.progress.update(label=(f"[{idx}/{total}] " if (idx and total) else "") + "正在合成单词发音…"))
         prov_cfg = str(cfg.get("tts_provider", "openai_compatible")).strip() or "openai_compatible"
         prov = prov_cfg if prov_cfg != "openai_compatible" else "openai"
         from .tts import get_tts_format
@@ -630,7 +630,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> 
 
     # 例句语音
     if example_text and enable_tts_example:
-        mw.taskman.run_on_main(lambda: mw.progress.update(label="正在合成例句发音…"))
+        mw.taskman.run_on_main(lambda idx=idx, total=total: mw.progress.update(label=(f"[{idx}/{total}] " if (idx and total) else "") + "正在合成例句发音…"))
         prov_cfg = str(cfg.get("tts_provider", "openai_compatible")).strip() or "openai_compatible"
         prov = prov_cfg if prov_cfg != "openai_compatible" else "openai"
         from .tts import get_tts_format
@@ -655,7 +655,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> 
 
     # ---- Image: 助记图（可选） ----
     if cfg.get("enable_image", True):
-        mw.taskman.run_on_main(lambda: mw.progress.update(label="正在生成助记图…"))
+        mw.taskman.run_on_main(lambda idx=idx, total=total: mw.progress.update(label=(f"[{idx}/{total}] " if (idx and total) else "") + "正在生成助记图…"))
         try:
             f_image = cfg.get("field_image", "Image")
             # img_bytes = call_openai_image(word, info, cfg)
@@ -695,7 +695,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any]) -> 
 
 # ---------------- 后台任务 & 菜单 ---------------- #
 
-def _background_create_card(word: str, enable_image: bool) -> None:
+def _background_create_card(word: str, enable_image: bool, idx: int | None = None, total: int | None = None) -> None:
     cfg = get_config()
     prov_cfg = str(cfg.get("text_provider", "openai_compatible")).strip() or "openai_compatible"
     prov = prov_cfg if prov_cfg != "openai_compatible" else "openai"
@@ -718,21 +718,27 @@ def _background_create_card(word: str, enable_image: bool) -> None:
     try:
         cfg2 = dict(cfg)
         cfg2["enable_image"] = enable_image
-        mw.taskman.run_on_main(lambda word_clean=word_clean: mw.progress.update(label=f"正在生成 {word_clean} 的词义与示例…"))
+        mw.taskman.run_on_main(lambda word_clean=word_clean, idx=idx, total=total: mw.progress.update(label=(f"[{idx}/{total}] " if (idx and total) else "") + f"正在生成 {word_clean} 的词义与示例…"))
         info = call_text(word_clean, cfg2)
         log(f"[bg] vocab info received: {info}")
-        mw.taskman.run_on_main(lambda: mw.progress.update(label="正在创建卡片并写入媒体…"))
-        _create_vocab_note(word_clean, info, cfg2)
+        mw.taskman.run_on_main(lambda idx=idx, total=total: mw.progress.update(label=(f"[{idx}/{total}] " if (idx and total) else "") + "正在创建卡片并写入媒体…"))
+        _create_vocab_note(word_clean, info, cfg2, idx, total)
 
         mw.taskman.run_on_main(
-            lambda word_clean=word_clean: tooltip(f"已创建卡片：{word_clean} ✅")
+            lambda word_clean=word_clean, idx=idx, total=total: tooltip((f"[{idx}/{total}] " if (idx and total) else "") + f"已创建卡片：{word_clean} ✅")
         )
         log(f"[bg] card creation finished for {word_clean!r}")
     except Exception as e:
         trace = traceback.format_exc()
         log("[bg] 创建卡片失败:\n" + trace)
         msg = f"创建卡片失败：{e}"
-        mw.taskman.run_on_main(lambda msg=msg: tooltip(msg))
+        mw.taskman.run_on_main(lambda msg=msg, idx=idx, total=total: tooltip((f"[{idx}/{total}] " if (idx and total) else "") + msg))
+
+
+def _background_create_cards(words: list[str], enable_image: bool) -> None:
+    mw.taskman.run_on_main(lambda: mw.progress.update(label=f"正在批量生成卡片… 共 {len(words)} 个"))
+    for idx, w in enumerate(words, 1):
+        _background_create_card(w, enable_image, idx, len(words))
 
 
 def on_menu_triggered() -> None:
@@ -740,8 +746,9 @@ def on_menu_triggered() -> None:
     dlg = QDialog(mw)
     dlg.setWindowTitle("Create Vocab Card")
     layout = QVBoxLayout(dlg)
-    label = QLabel("请输入一个英文单词：", dlg)
-    edit = QLineEdit(dlg)
+    label = QLabel("请输入英文单词（可粘贴多行，每行一个；或用逗号分隔）：", dlg)
+    edit = QPlainTextEdit(dlg)
+    edit.setPlaceholderText("例如：\napple\nbanana\ncherry\n或：apple, banana, cherry")
     cb = QCheckBox("生成助记图", dlg)
     cb.setChecked(bool(cfg.get("enable_image", True)))
     layout.addWidget(label)
@@ -756,15 +763,31 @@ def on_menu_triggered() -> None:
     qconnect(btns.rejected, dlg.reject)
     if dlg.exec() != QDialog.DialogCode.Accepted:
         return
-    word = edit.text()
-    if not word.strip():
+    raw = edit.toPlainText()
+    if not raw.strip():
         return
+    text = raw.replace(",", "\n")
+    words = [w.strip() for w in text.splitlines() if w.strip()]
+    seen = set()
+    unique_words = []
+    for w in words:
+        wl = w.lower()
+        if wl not in seen:
+            seen.add(wl)
+            unique_words.append(w)
     enable_image = cb.isChecked()
-    mw.progress.start(label="正在生成卡片…", immediate=True)
-    mw.taskman.run_in_background(
-        lambda: _background_create_card(word, enable_image),
-        lambda _: mw.progress.finish(),
-    )
+    if len(unique_words) == 1:
+        mw.progress.start(label="正在生成卡片…", immediate=True)
+        mw.taskman.run_in_background(
+            lambda: _background_create_card(unique_words[0], enable_image, 1, 1),
+            lambda _: mw.progress.finish(),
+        )
+    else:
+        mw.progress.start(label=f"正在批量生成卡片… 共 {len(unique_words)} 个", immediate=True)
+        mw.taskman.run_in_background(
+            lambda: _background_create_cards(unique_words, enable_image),
+            lambda _: mw.progress.finish(),
+        )
 
 
 def setup_menu() -> None:
