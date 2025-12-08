@@ -15,17 +15,32 @@ class GeminiImageAdapter(ImageAdapter):
         base = "https://generativelanguage.googleapis.com/v1beta"
         url = f"{base}/models/{model}:generateContent"
         meaning = info.get("meaning", "")
+        example = info.get("example", "")
+
         prompt = (
-            f"Create an illustration to help remember the English word '{word}' (meaning: {meaning}). "
-            f"First, analyze the 'vibe' of the word to decide the art style: "
-            f"1. For concrete objects (e.g., fruit, tools), use 'Hyper-realistic product photography' style. "
-            f"2. For abstract concepts or emotions (e.g., freedom, thought), use 'Surrealist minimal vector' style. "
-            f"3. For actions or funny situations (e.g., jump, clumsy), use 'Exaggerated 3D Pixar-style cartoon'. "
-            f"4. For nature or vintage terms, use 'Watercolour' or 'Hand-drawn sketch' style. "
-            f"\n"
-            f"Make the image focused on a single subject. "
-            f"CRITICAL RULES: NO text, NO letters, NO numbers. Keep the composition simple, high contrast, and identifiable at a small size (thumbnail friendly)."
+            f"Create a clear, memorable illustration to help an English learner remember the word '{word}'.\n\n"
+            f"Word: {word}\n"
+            f"Meaning: {meaning}\n"
+
+            f"Step 1: Analyze the word’s category and choose the most fitting art style:\n"
+            f"- If the word refers to a physical object (e.g., fruit, tool, animal): use **hyper-realistic product photography**.\n"
+            f"- If it describes an abstract concept or emotion (e.g., honesty, boredom): use **surreal minimalist vector art**.\n"
+            f"- If it's an action or a funny situation (e.g., stumble, giggle): use **3D cartoon (Pixar-style)**.\n"
+            f"- If it's a nature term or vintage word (e.g., moss, quill): use **watercolor or hand-drawn sketch**.\n\n"
+
+            f"Step 2: Visualize the sentence. Focus on the most concrete, visual aspect of the meaning sentence:\n"
+            f"• Turn the sentence into a simple, thumbnail-friendly scene with one central subject.\n"
+            f"• Use colors, shapes, and objects to suggest the tone and meaning of the word.\n\n"
+
+            f"CRITICAL RULES:\n"
+            f"- DO NOT include any text, letters, numbers, or word labels in the image.\n"
+            f"- Keep the composition simple and centered: high contrast, easy to understand at small size.\n"
+            f"- Make the image emotionally aligned with the sentence's tone (serious, humorous, warm, etc.).\n"
+            f"- Use only one main subject; avoid busy or cluttered backgrounds.\n\n"
+
+            f"Output only the scene (no captions)."
         )
+
         payload = {
             "contents": [{"parts": [{"text": prompt}]}]
         }
