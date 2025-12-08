@@ -607,7 +607,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any], idx
 
     # ---- Word Audio ----
     if enable_tts_word:
-        mw.taskman.run_on_main(lambda idx=idx, total=total: mw.progress.update(label=(f"[{idx}/{total}] " if (idx and total) else "") + "正在合成单词发音…"))
+        mw.taskman.run_on_main(lambda idx=idx, total=total: mw.progress.update(label=(f"[{idx}/{total}] " if (idx and total) else "") + f"正在合成{word}单词发音…"))
         prov_cfg = str(cfg.get("tts_provider", "openai_compatible")).strip() or "openai_compatible"
         prov = prov_cfg if prov_cfg != "openai_compatible" else "openai"
         from .tts import get_tts_format
@@ -630,7 +630,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any], idx
 
     # 例句语音
     if example_text and enable_tts_example:
-        mw.taskman.run_on_main(lambda idx=idx, total=total: mw.progress.update(label=(f"[{idx}/{total}] " if (idx and total) else "") + "正在合成例句发音…"))
+        mw.taskman.run_on_main(lambda idx=idx, total=total: mw.progress.update(label=(f"[{idx}/{total}] " if (idx and total) else "") + f"正在合成{word}例句发音…"))
         prov_cfg = str(cfg.get("tts_provider", "openai_compatible")).strip() or "openai_compatible"
         prov = prov_cfg if prov_cfg != "openai_compatible" else "openai"
         from .tts import get_tts_format
@@ -655,7 +655,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any], idx
 
     # ---- Image: 助记图（可选） ----
     if cfg.get("enable_image", True):
-        mw.taskman.run_on_main(lambda idx=idx, total=total: mw.progress.update(label=(f"[{idx}/{total}] " if (idx and total) else "") + "正在生成助记图…"))
+        mw.taskman.run_on_main(lambda idx=idx, total=total: mw.progress.update(label=(f"[{idx}/{total}] " if (idx and total) else "") + f"正在生成{word}助记图…"))
         try:
             f_image = cfg.get("field_image", "Image")
             # img_bytes = call_openai_image(word, info, cfg)
@@ -693,10 +693,67 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any], idx
     log(f"[note] note added for word={word!r}")
 
 
+def _note_exists_in_deck(word: str, cfg: Dict[str, Any]) -> bool:
+    """
+    Check if a note with the same Word field already exists in the target deck
+    and specified note type. Comparison is case-insensitive.
+
+    Returns:
+        True if a duplicate exists, otherwise False.
+    """
+    col = mw.col
+    deck_name = cfg.get("deck_name", "Vocab")
+    model_name = cfg.get("note_type", "VocabularyPro")
+    f_word = cfg.get("field_word", "Word")
+
+    # If the deck doesn't exist yet, treat as no duplicate.
+    deck = col.decks.by_name(deck_name)
+    if not deck:
+        return False
+
+    # Use search to narrow down candidates, then compare the Word field exactly.
+    query = f'deck:"{deck_name}" note:"{model_name}" "{word}"'
+    try:
+        nids = col.find_notes(query)
+    except Exception:
+        nids = []
+
+    wl = word.strip().lower()
+    for nid in nids:
+        n = col.get_note(nid)
+        try:
+            if n[f_word].strip().lower() == wl:
+                return True
+        except Exception:
+            # Fallback: if the configured field doesn't exist, compare the first field.
+            first = n.fields[0].strip().lower() if getattr(n, "fields", None) else ""
+            if first == wl:
+                return True
+    return False
+
 # ---------------- 后台任务 & 菜单 ---------------- #
 
 def _background_create_card(word: str, enable_image: bool, idx: int | None = None, total: int | None = None) -> None:
     cfg = get_config()
+
+    # Normalize input early.
+    word_clean = word.strip()
+    if not word_clean:
+        mw.taskman.run_on_main(lambda: tooltip("单词为空"))
+        log("[bg] empty word, abort")
+        return
+
+    # Duplicate check first to avoid unnecessary API calls and media generation.
+    if _note_exists_in_deck(word_clean, cfg):
+        mw.taskman.run_on_main(
+            lambda word_clean=word_clean, idx=idx, total=total: tooltip(
+                (f"[{idx}/{total}] " if (idx and total) else "") + f"已存在，跳过：{word_clean} 🚫"
+            )
+        )
+        log(f"[bg] skipped existing note for {word_clean!r}")
+        return
+
+    # Resolve text provider and API key only if we really need to generate.
     prov_cfg = str(cfg.get("text_provider", "openai_compatible")).strip() or "openai_compatible"
     prov = prov_cfg if prov_cfg != "openai_compatible" else "openai"
     key = resolve_api_key_for(prov, cfg)
@@ -707,12 +764,6 @@ def _background_create_card(word: str, enable_image: bool, idx: int | None = Non
         log("[bg] api key missing for text provider")
         return
 
-    word_clean = word.strip()
-    if not word_clean:
-        mw.taskman.run_on_main(lambda: tooltip("单词为空"))
-        log("[bg] empty word, abort")
-        return
-
     log(f"[bg] start create card for word={word_clean!r}")
 
     try:
@@ -721,7 +772,7 @@ def _background_create_card(word: str, enable_image: bool, idx: int | None = Non
         mw.taskman.run_on_main(lambda word_clean=word_clean, idx=idx, total=total: mw.progress.update(label=(f"[{idx}/{total}] " if (idx and total) else "") + f"正在生成 {word_clean} 的词义与示例…"))
         info = call_text(word_clean, cfg2)
         log(f"[bg] vocab info received: {info}")
-        mw.taskman.run_on_main(lambda idx=idx, total=total: mw.progress.update(label=(f"[{idx}/{total}] " if (idx and total) else "") + "正在创建卡片并写入媒体…"))
+        mw.taskman.run_on_main(lambda idx=idx, total=total: mw.progress.update(label=(f"[{idx}/{total}] " if (idx and total) else "") + f"正在创建 {word_clean} 的卡片并写入媒体…"))
         _create_vocab_note(word_clean, info, cfg2, idx, total)
 
         mw.taskman.run_on_main(
