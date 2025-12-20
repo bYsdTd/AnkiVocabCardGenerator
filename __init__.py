@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import ssl
 import traceback
 import urllib.request
@@ -21,7 +22,7 @@ def log(msg: str) -> None:
     try:
         base = os.path.dirname(__file__)
         path = os.path.join(base, "debug.log")
-        with open(path, "w", encoding="utf-8") as f:
+        with open(path, "a", encoding="utf-8") as f:
             f.write(msg + "\n")
     except Exception:
         # logging 失败就算了，避免影响主流程
@@ -93,20 +94,119 @@ def ensure_media_file(col, desired_name: str, generator_fn):
     generator_fn() 必须返回 bytes。
     返回最终文件名（可能是 desired_name 或带 hash 的实际保存名）。
     """
-    # 1. 如果已有，直接用
-    if col.media.have(desired_name):
+    # 1. 如果已有且非空，直接用
+    if _media_file_is_valid(col, desired_name):
         log(f"[media] reuse existing file: {desired_name}")
         return desired_name
 
+    _delete_media_file_if_zero(col, desired_name)
+
     # 2. 没有 → 调用生成器
     log(f"[media] generating new media: {desired_name}")
-    data = generator_fn()
+    try:
+        data = generator_fn()
+    except Exception:
+        log(f"[media] generator failed for {desired_name}:\n" + traceback.format_exc())
+        raise
+    if not data:
+        log(f"[media] generator returned empty bytes for {desired_name}")
+        raise RuntimeError(f"empty media bytes: {desired_name}")
 
-    # 3. 写文件（返回实际文件名，可能带 hash 后缀）
-    stored_name = col.media.write_data(desired_name, data)
+    stored_name = _write_media_bytes_overwrite(col, desired_name, data)
     log(f"[media] stored file as: {stored_name}")
-
     return stored_name
+
+
+def _media_file_is_valid(col, filename: str) -> bool:
+    if not filename:
+        return False
+    try:
+        if not col.media.have(filename):
+            return False
+    except Exception:
+        return False
+    try:
+        media_dir = col.media.dir()
+        p = os.path.join(media_dir, filename)
+        return os.path.exists(p) and os.path.getsize(p) > 0
+    except Exception:
+        return True
+
+
+def _delete_media_file_if_zero(col, filename: str) -> None:
+    if not filename:
+        return
+    try:
+        media_dir = col.media.dir()
+        p = os.path.join(media_dir, filename)
+        if os.path.exists(p) and os.path.getsize(p) == 0:
+            os.remove(p)
+    except Exception:
+        return
+
+
+def _write_media_bytes_overwrite(col, filename: str, data: bytes) -> str:
+    media_dir = col.media.dir()
+    final_path = os.path.join(media_dir, filename)
+    tmp_path = final_path + f".tmp_{random.randint(100000, 999999)}"
+    with open(tmp_path, "wb") as f:
+        f.write(data)
+    os.replace(tmp_path, final_path)
+    return filename
+
+
+def _copy_media_file_overwrite(col, src_filename: str, dst_filename: str) -> bool:
+    if not src_filename or not dst_filename:
+        return False
+    try:
+        media_dir = col.media.dir()
+        src_path = os.path.join(media_dir, src_filename)
+        if not os.path.exists(src_path) or os.path.getsize(src_path) <= 0:
+            return False
+        with open(src_path, "rb") as f:
+            data = f.read()
+        if not data:
+            return False
+        _write_media_bytes_overwrite(col, dst_filename, data)
+        return True
+    except Exception:
+        return False
+
+
+def _canonical_audio_filename(word_lower: str, kind: str, provider_ext: str, filenames: list[str]) -> str:
+    if not word_lower:
+        return ""
+    base = f"{word_lower}_{kind}"
+    for fn in filenames:
+        m = re.match(rf"^{re.escape(base)}\.(mp3|wav)$", fn, flags=re.IGNORECASE)
+        if m:
+            return f"{base}.{m.group(1).lower()}"
+    for fn in filenames:
+        m = re.match(rf"^{re.escape(base)}[^/]*\.(mp3|wav)$", fn, flags=re.IGNORECASE)
+        if m:
+            ext = fn.rsplit(".", 1)[-1].lower()
+            return f"{base}.{ext}"
+    ext2 = str(provider_ext).lower()
+    if ext2 not in ("mp3", "wav"):
+        ext2 = "mp3"
+    return f"{base}.{ext2}"
+
+
+def _extract_sound_filenames(s: str) -> list[str]:
+    if not s:
+        return []
+    return re.findall(r"\[sound:([^\]]+)\]", s)
+
+
+def _current_deck_name_or_default(cfg: Dict[str, Any]) -> str:
+    try:
+        d = mw.col.decks.current()
+        name = str((d or {}).get("name", "")).strip()
+        if name:
+            return name
+    except Exception:
+        pass
+    return str(cfg.get("deck_name", "Vocab")).strip() or "Vocab"
 
 
 def resolve_api_key(cfg: Dict[str, Any]) -> str:
@@ -623,6 +723,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any], idx
             note[f_audio] = f"[sound:{audio_name}]"
             log(f"[note] wrote word audio: {audio_name}")
         except Exception:
+            log(f"[tts] failed to create word audio for {word!r} ({raw_audio_name}):\n" + traceback.format_exc())
             note[f_audio] = ""
     else:
         note[f_audio] = ""
@@ -646,6 +747,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any], idx
             note[f_audio_example] = f"[sound:{example_audio_name}]"
             log(f"[note] wrote example audio: {example_audio_name}")
         except Exception:
+            log(f"[tts] failed to create example audio for {word!r} ({raw_example_audio}):\n" + traceback.format_exc())
             note[f_audio_example] = ""
     elif example_text:
         note[f_audio_example] = ""
@@ -676,7 +778,7 @@ def _create_vocab_note(word: str, info: Dict[str, str], cfg: Dict[str, Any], idx
             log(f"[note] wrote image file: {image_name}")
         except Exception as e:
             # 图片失败不要中断整个建卡流程
-            log(f"[image] failed to create image for {word!r}: {e}")
+            log(f"[image] failed to create image for {word!r}:\n" + traceback.format_exc())
 
     # 牌组 id
     deck = col.decks.by_name(deck_name)
@@ -792,6 +894,161 @@ def _background_create_cards(words: list[str], enable_image: bool) -> None:
         _background_create_card(w, enable_image, idx, len(words))
 
 
+def _escape_search_term(s: str) -> str:
+    return s.replace('"', "\\\"")
+
+
+def _background_repair_missing_audio(deck_name: str) -> Dict[str, Any]:
+    cfg = get_config()
+    col = mw.col
+
+    model_name = str(cfg.get("note_type", "VocabularyPro")).strip() or "VocabularyPro"
+    f_word = str(cfg.get("field_word", "Word")).strip() or "Word"
+    f_example = str(cfg.get("field_example", "Example")).strip() or "Example"
+    f_audio = str(cfg.get("field_audio", "Audio")).strip() or "Audio"
+    f_audio_example = str(cfg.get("field_audio_example", "AudioExample")).strip() or "AudioExample"
+
+    enable_tts_word = bool(cfg.get("enable_tts_word", True))
+    enable_tts_example = bool(cfg.get("enable_tts_example", True))
+
+    prov_cfg = str(cfg.get("tts_provider", "openai_compatible")).strip() or "openai_compatible"
+    prov = prov_cfg if prov_cfg != "openai_compatible" else "openai"
+    key = resolve_api_key_for(prov, cfg)
+    if (enable_tts_word or enable_tts_example) and not key:
+        return {"ok": False, "error": "请在插件目录 .env 中设置对应 TTS 的 API_KEY"}
+
+    try:
+        query = f'deck:"{_escape_search_term(deck_name)}" note:"{_escape_search_term(model_name)}"'
+        nids = col.find_notes(query)
+    except Exception as e:
+        return {"ok": False, "error": f"查询失败：{e}"}
+
+    total = len(nids)
+    fixed_word = 0
+    fixed_example = 0
+    failed_word = 0
+    failed_example = 0
+    scanned = 0
+
+    from .tts import get_tts_format
+    ext = get_tts_format(prov, cfg)
+
+    for idx, nid in enumerate(nids, 1):
+        scanned += 1
+        note = col.get_note(nid)
+        try:
+            word = str(note[f_word]).strip()
+        except Exception:
+            word = ""
+        if not word:
+            try:
+                word = str(note.fields[0]).strip()
+            except Exception:
+                word = ""
+
+        try:
+            example_text = str(note[f_example]).strip()
+        except Exception:
+            example_text = ""
+
+        changed = False
+
+        if enable_tts_word:
+            try:
+                cur_audio_val = str(note[f_audio]).strip()
+            except Exception:
+                cur_audio_val = ""
+            filenames = _extract_sound_filenames(cur_audio_val)
+            word_lower = word.strip().lower()
+            target_name = _canonical_audio_filename(word_lower, "word", ext, filenames)
+            valid_existing = ""
+            for fn in filenames:
+                if _media_file_is_valid(col, fn):
+                    valid_existing = fn
+                    break
+            if valid_existing and valid_existing != target_name and not _media_file_is_valid(col, target_name):
+                _copy_media_file_overwrite(col, valid_existing, target_name)
+            has_existing = _media_file_is_valid(col, target_name)
+            if not has_existing and word and target_name:
+                mw.taskman.run_on_main(
+                    lambda idx=idx, total=total, word=word: mw.progress.update(
+                        label=(f"[{idx}/{total}] " if total else "") + f"正在补全{word}单词发音…"
+                    )
+                )
+                try:
+                    audio_name = ensure_media_file(col, target_name, lambda w=word: call_tts(f"{w}.", cfg))
+                    note[f_audio] = f"[sound:{audio_name}]"
+                    changed = True
+                    fixed_word += 1
+                except Exception:
+                    failed_word += 1
+                    log(f"[repair-audio] word audio failed for {word!r} -> {target_name}:\n" + traceback.format_exc())
+            elif target_name and (not filenames or filenames[0] != target_name):
+                note[f_audio] = f"[sound:{target_name}]"
+                changed = True
+                fixed_word += 1
+
+        if enable_tts_example and example_text:
+            try:
+                cur_ex_audio_val = str(note[f_audio_example]).strip()
+            except Exception:
+                cur_ex_audio_val = ""
+            filenames = _extract_sound_filenames(cur_ex_audio_val)
+            word_lower = word.strip().lower()
+            target_name = _canonical_audio_filename(word_lower, "example", ext, filenames)
+            valid_existing = ""
+            for fn in filenames:
+                if _media_file_is_valid(col, fn):
+                    valid_existing = fn
+                    break
+            if valid_existing and valid_existing != target_name and not _media_file_is_valid(col, target_name):
+                _copy_media_file_overwrite(col, valid_existing, target_name)
+            has_existing = _media_file_is_valid(col, target_name)
+            if not has_existing and word and target_name:
+                mw.taskman.run_on_main(
+                    lambda idx=idx, total=total, word=word: mw.progress.update(
+                        label=(f"[{idx}/{total}] " if total else "") + f"正在补全{word}例句发音…"
+                    )
+                )
+                try:
+                    example_audio_name = ensure_media_file(col, target_name, lambda t=example_text: call_tts(t, cfg))
+                    note[f_audio_example] = f"[sound:{example_audio_name}]"
+                    changed = True
+                    fixed_example += 1
+                except Exception:
+                    failed_example += 1
+                    log(f"[repair-audio] example audio failed for {word!r} -> {target_name}:\n" + traceback.format_exc())
+            elif target_name and (not filenames or filenames[0] != target_name):
+                note[f_audio_example] = f"[sound:{target_name}]"
+                changed = True
+                fixed_example += 1
+
+        if changed:
+            try:
+                note.flush()
+            except Exception:
+                pass
+
+        if idx % 20 == 0:
+            mw.taskman.run_on_main(
+                lambda idx=idx, total=total: mw.progress.update(
+                    label=(f"[{idx}/{total}] " if total else "") + "正在扫描并补全缺失语音…"
+                )
+            )
+
+    return {
+        "ok": True,
+        "deck": deck_name,
+        "model": model_name,
+        "scanned": scanned,
+        "total": total,
+        "fixed_word": fixed_word,
+        "fixed_example": fixed_example,
+        "failed_word": failed_word,
+        "failed_example": failed_example,
+    }
+
+
 def on_menu_triggered() -> None:
     cfg = get_config()
     dlg = QDialog(mw)
@@ -841,6 +1098,41 @@ def on_menu_triggered() -> None:
         )
 
 
+def on_repair_audio_triggered() -> None:
+    cfg = get_config()
+    deck_name = _current_deck_name_or_default(cfg)
+    if not deck_name:
+        tooltip("未找到当前牌组")
+        return
+    mw.progress.start(label=f"正在扫描并补全缺失语音… 牌组：{deck_name}", immediate=True)
+
+    def _on_done(future) -> None:
+        mw.progress.finish()
+        try:
+            res = future.result()
+        except Exception as e:
+            log("[repair-audio] failed:\n" + traceback.format_exc())
+            tooltip(f"补全语音失败：{e}")
+            return
+        if not res or not res.get("ok"):
+            tooltip(str((res or {}).get("error", "补全语音失败")))
+            return
+        scanned = int(res.get("scanned", 0))
+        fixed_word = int(res.get("fixed_word", 0))
+        fixed_example = int(res.get("fixed_example", 0))
+        failed_word = int(res.get("failed_word", 0))
+        failed_example = int(res.get("failed_example", 0))
+        if failed_word or failed_example:
+            tooltip(
+                f"补全完成：扫描 {scanned} 条，补全 单词 {fixed_word} / 例句 {fixed_example}，"
+                f"失败 单词 {failed_word} / 例句 {failed_example}（详见 debug.log）"
+            )
+        else:
+            tooltip(f"补全完成：扫描 {scanned} 条，补全 单词 {fixed_word} / 例句 {fixed_example} ✅")
+
+    mw.taskman.run_in_background(lambda: _background_repair_missing_audio(deck_name), _on_done)
+
+
 def setup_menu() -> None:
     """在 Tools 菜单下添加入口。"""
     log("[init] setup_menu called, adding menu item")
@@ -848,6 +1140,10 @@ def setup_menu() -> None:
     action.setShortcut(QKeySequence("Meta+G"))
     qconnect(action.triggered, on_menu_triggered)
     mw.form.menuTools.addAction(action)
+
+    action2 = QAction("OpenAI: 补全当前牌组缺失语音", mw)
+    qconnect(action2.triggered, on_repair_audio_triggered)
+    mw.form.menuTools.addAction(action2)
 
 
 gui_hooks.profile_did_open.append(setup_menu)
